@@ -41,16 +41,22 @@ def render_movie_list(login_userid, total_movies, rec_dict):
 	cols = st.beta_columns(12)
 	rating_list = []
 	ind = 0
-	for i in range(total_movies/6):
+	movie_dict = json.loads(movieDb.get("movie_dict"))
+	user_movie_list = json.loads(userMovieDb.get(login_userid))
+	total_movies = 24
+	st.write("Showing {} movies to rate".format(total_movies))
+	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = userMovieDb.lindex(login_userid, ind)
-			movieName = movieDb.lindex(movieId, 0)
-			movieImg = movieDb.lindex(movieId, 1)
-			cols[j].image(movieImg, caption=movieName, width=100)
+			movieId = str(user_movie_list[ind])
+			movieName = movie_dict[movieId][0]
+			movieImg = movie_dict[movieId][1]
+			cols[j].image(movieImg, width=100)
+			expander = cols[j].beta_expander("Info", expanded=False)
+			with expander:
+				st.write(movieName)
 			v = 0.0
 			if rec_dict.get(movieId) is not None:
 				v = rec_dict.get(movieId)
-			
 			val = cols[j].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value=v, format='%.1f', key=ind)
 			rating_list.append(val)
 			ind += 1
@@ -61,16 +67,23 @@ def render_movie_list(login_userid, total_movies, rec_dict):
 
 def display_rated_movies(login_userid, rec_dict):
 	cols = st.beta_columns(12)
+	movie_id_list = list(rec_dict.keys())
 	ind = 0
-	total_movies = len(rec_dict)
-	for i in range(total_movies/6):
+	total_movies = len(movie_id_list)
+	#total_movies = 24
+	movie_dict = json.loads(movieDb.get("movie_dict"))
+	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = rect_dict.keys()[ind]
-			movieName = movieDb.lindex(movieId, 0)
-			movieImg = movieDb.lindex(movieId, 1)
-			cols[j].image(movieImg, caption=movieName, width=100)
+			movieId = str(movie_id_list[ind])
+			movieName = movie_dict[movieId][0]
+			movieImg = movie_dict[movieId][1]
+			cols[j].image(movieImg, width=100)
 			rating = rec_dict.get(movieId)
-			cols[j].text_input("My Rating", value=rating, key=ind)
+			#cols[j].text_input("My Rating", value=rating, key=ind)
+			expander = cols[j].beta_expander("Info", expanded=False)
+			with expander:
+				st.write(movieName)
+				st.write("My rating: {}".format(rating))
 			ind += 1
 			if ind == total_movies:
 				return
@@ -79,13 +92,18 @@ def display_rated_movies(login_userid, rec_dict):
 def display_recommendations(login_userid):
 	cols = st.beta_columns(12)
 	ind = 0
-	total_movies = userReccDb.llen(login_userid)
-	for i in range(total_movies/6):
+	recc_list = json.loads(userReccDb.get(login_userid))
+	total_movies = len(recc_list)
+	movie_dict = json.loads(movieDb.get("movie_dict"))
+	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = userReccDb.llindex(login_userid, ind)
-			movieName = movieDb.lindex(movieId, 0)
-			movieImg = movieDb.lindex(movieId, 1)
-			cols[j].image(movieImg, caption=movieName, width=100)
+			movieId = str(recc_list[ind])
+			movieName = movie_dict[movieId][0]
+			movieImg = movie_dict[movieId][1]
+			cols[j].image(movieImg, width=100)
+			expander = cols[j].beta_expander("Info", expanded=False)
+			with expander:
+				st.write(movieName)
 			ind += 1
 			if ind == total_movies:
 				return
@@ -116,6 +134,9 @@ def main():
 				ind += 1
 				#entry = {'title':'AC', 'rating': val}
 				list['AC'] = val
+				my_expander = cols[i].beta_expander("Details", expanded=True)
+				with my_expander:
+					st.write("Assassins Creed Brotherhood")
 		st.write(list)
 
 	elif choice == "Login":
@@ -155,7 +176,7 @@ def main():
 
 						if task == "Movies watched":
 							if activeUserRatingDb.get(login_userid):
-								rec_dict = jsonpickle.loads(activeUserRatingDb.get(login_userid))
+								rec_dict = json.loads(activeUserRatingDb.get(login_userid))
 								display_rated_movies(login_userid, rec_dict)
 
 							else:
@@ -194,26 +215,27 @@ def main():
 									data = jsonpickle.encode(options)
 									response = requests.post(url, data=data, headers=headers)
 									if json.loads(response.text)['status'] == 'OK':
-										total_movies = userMovieDb.llen(login_userid)
+										user_movie_list = json.loads(userMovieDb.get(login_userid))
+										total_movies = len(user_movie_list)
 
 										#check if previous recommendation list exists for current user to update - otherwise create new
 										rec_dict = {}		#<movieId> <rating>
 										if activeUserRatingDb.get(login_userid):
-											rec_dict = jsonpickle.loads(activeUserRatingDb.get(login_userid))
+											rec_dict = json.loads(activeUserRatingDb.get(login_userid))
 
 										ratings = []
 										if total_movies > 0:
 											ratings = render_movie_list(login_userid, total_movies, rec_dict)
 										if st.button("Submit"):
 											userInput = []
-											for i in ratings:
-												if i > 0:
-													index = ratings.index(i)
-													movieId = userMovieDb.lindex(login_userid, index)
+											for index, i in enumerate(ratings):
+												if i > 0.0:
+													movieId = user_movie_list[index]
 													#movieTitle = movieDb.lindex(movieId, 0)
 													rec_dict[movieId] = i
 													#entry = {'title': movieTitle, 'rating': i}
 											activeUserRatingDb.set(login_userid, jsonpickle.dumps(rec_dict))
+											st.success("You have successfully submitted your ratings")
 									else:
 										st.write(json.loads(response.text)['status'])
 										st.button('Retry', key=2)
@@ -240,8 +262,7 @@ def main():
 					loginDb.rpush(new_user, make_hashes(new_password), str(int(latest_user_id)+1))
 					st.success("You have successfully created a valid Account")
 					st.info("Go to Login Menu to login")
-					latest_user_id += 1
-					genDb.set("latest_user_id", int(latest_user_id))
+					genDb.set("latest_user_id", int(latest_user_id)+1)
 				else:
 					st.warning("User already exists. Please login.")
 

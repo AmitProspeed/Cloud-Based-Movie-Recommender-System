@@ -1,11 +1,15 @@
 from flask import Flask, request, Response
-import pickle, jsonpickle
+import pickle, json, jsonpickle
 import pandas as pd
 import redis
 import os
 
+#Math functions, we'll only need the sqrt function so let's import only that
+from math import sqrt
+import numpy as np
+
 def initialize_application():
-    global genres
+    global genres, ratings_df, movies_df, links_df
     try:
         #adding genres to DB0 <genres><[genres list]
         if not genDb.llen("genres"):
@@ -18,29 +22,46 @@ def initialize_application():
         #Read movies, ratings and links csv
         ratings_df = pd.read_csv("../dataset/ml_25m/ratings.csv")
         movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
-        links_df = pd.read_csv("../dataset/ml_25m/links.csv")
+        links_df = pd.read_csv("../dataset/ml_25m/links_new.csv")
         #genDb.set("movies_df", pickle.dumps(movies_df))
         #genDb.set("ratings_df", pickle.dumps(ratings_df))
         #genDb.set("links_df", pickle.dumps(links_df))
-        print ("Dataframes loaded.")
+
+        #preprocessing
+        #Using regular expressions to find a year stored between parentheses
+        #We specify the parantheses so we don't conflict with movies that have years in their titles
+        movies_df['year'] = movies_df.title.str.extract('(\(\d\d\d\d\))',expand=False)
+        #Removing the parentheses
+        movies_df['year'] = movies_df.year.str.extract('(\d\d\d\d)',expand=False)
+        #Removing the years from the 'title' column
+        movies_df['title'] = movies_df.title.str.replace('(\(\d\d\d\d\))', '')
+        #Applying the strip function to get rid of any ending whitespace characters that may have appeared
+        movies_df['title'] = movies_df['title'].apply(lambda x: x.strip())
+        #Dropping timestamp from dataframe
+        ratings_df = ratings_df.drop('timestamp', 1)
+        print ("Dataframes loaded and preprocessed.")
 
         #Store latest user and movie Id
-        latest_user_id =  max(ratings_df["userId"].max(), genDb.get("latest_user_id")) if genDb.get("latest_user_id") else ratings_df["userId"].max()
-        latest_movie_id =  max(ratings_df["movieId"].max(), genDb.get("latest_movie_id")) if genDb.get("latest_movie_id") else ratings_df["movieId"].max()
+        latest_user_id =  max(ratings_df["userId"].max(), int(genDb.get("latest_user_id"))) if genDb.get("latest_user_id") else ratings_df["userId"].max()
+        latest_movie_id =  max(ratings_df["movieId"].max(), int(genDb.get("latest_movie_id"))) if genDb.get("latest_movie_id") else ratings_df["movieId"].max()
         genDb.set("latest_user_id", int(latest_user_id))
         genDb.set("latest_movie_id", int(latest_movie_id))
         print ("Latest user id:{}".format(latest_user_id))
         print ("Latest movie id:{}".format(latest_movie_id))
 
         #Store movie details in movieDb
-        movie_dict = movieDb.get("movie_dict") or {}
+        movie_dict = {}
+        if movieDb.get("movie_dict") is not None:
+            movie_dict = json.loads(movieDb.get("movie_dict"))
+        
         for i,j in enumerate(links_df['movieId']):
-            imgUrl = links_df['imglink'][i]
-            movie_name = movies_df['title'][i]
-            movie_dict[j] = [movie_name, imgUrl]
-            #movieDb.rpush(j,movie_name)
-            #movieDb.rpush(j, imgUrl)
-        movieDb.set("movie_dict", movie_dict)
+            if movie_dict.get(j) is None:
+                imgUrl = links_df['imglink'][i]
+                movie_name = movies_df['title'][i]
+                movie_dict[j] = [movie_name, imgUrl]
+                #movieDb.rpush(j,movie_name)
+                #movieDb.rpush(j, imgUrl)
+        movieDb.set("movie_dict", jsonpickle.dumps(movie_dict))
         print ("MovieDB populated.")
 
 
@@ -67,19 +88,23 @@ userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    #
 @app.route('/compute/movies/<userid>', methods=['POST'])
 def compute_movies(userid):
     try:
+        global movies_df
         print ("/compute/movies api call started")
         r = request
         genre_list = jsonpickle.loads(r.data)
         print (genre_list)
         #movies_df = pickle.loads(genDb.get("movies_df"))
-        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
+        #movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
         result = []
         for i in genre_list:
             user_movies_df = movies_df[movies_df['genres'].str.contains(i)]
             result += user_movies_df['movieId'].tolist()
         print (len(result))
+        movie_list = []
         for i in list(dict.fromkeys(result)):
-            userMovieDb.rpush(userid, i)
+            movie_list.append(i)
+        print (len(movie_list))
+        userMovieDb.set(userid, jsonpickle.dumps(movie_list))
 
         response = {'status' : 'OK'}
         print (response)
@@ -98,21 +123,18 @@ def compute_movies(userid):
 # route http posts to this method
 @app.route('/compute/recommendations/<userid>', methods=['POST'])
 def compute_recommendations(userid):
+    global ratings_df, movies_df
     try:
         print ("/compute/recommendations/ api call started")
-        #preprocessing
-        #movies_df = pickle.loads(genDb.get("movies_df"))
-        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
-        #ratings_df = pickle.loads(genDb.get("ratings_df"))
-        ratings_df = pd.read_csv("../dataset/ml_25m/ratings.csv")
-        ratings_df = ratings_df.drop('timestamp', 1)
+        
         print (ratings_df.head())
         print (movies_df.head())
 
         user_dict = jsonpickle.loads(activeUserRatingDb.get(userid))
         userInput = []
+        movie_dict = jsonpickle.loads(movieDb.get("movie_dict"))
         for key in user_dict.keys():
-            entry = {'title': movieDb.lindex(key, 0), 'rating': user_dict[key]}
+            entry = {'title': movie_dict[key][0], 'rating': user_dict[key]}
             userInput.append(entry)
         inputMovies = pd.DataFrame(userInput)
         print (inputMovies)
@@ -125,14 +147,14 @@ def compute_recommendations(userid):
         #Then merging it so we can get the movieId. It's implicitly merging it by title.
         inputMovies = pd.merge(inputId, inputMovies)
         #Dropping information we won't use from the input dataframe
-        inputMovies = inputMovies.drop('year', 1)
+        #inputMovies = inputMovies.drop('year', 1)
         print (inputMovies)
         #Filtering out users that have watched movies that the input has watched and storing it
         userSubset = ratings_df[ratings_df['movieId'].isin(inputMovies['movieId'].tolist())]
         print (userSubset.head())
         #Groupby creates several sub dataframes where they all have the same value in the column specified as the parameter
         userSubsetGroup = userSubset.groupby(['userId'])
-        print (userSubsetGroup.get_group(1130))
+        #print (userSubsetGroup.get_group(1130))
         #Sorting it so users with movie most in common with the input will have priority
         userSubsetGroup = sorted(userSubsetGroup,  key=lambda x: len(x[1]), reverse=True)
         print (userSubsetGroup[0:3])
@@ -197,8 +219,11 @@ def compute_recommendations(userid):
         #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
 
         #Store top 20 movie recommendations in the userReccDb
+        recc_list = []
         for i in recommendation_df.head(20)['movieId']:
-            userReccDb.rpush(userid, i)
+            recc_list.append(i)
+        print (recc_list)
+        userReccDb.set(userid, jsonpickle.dumps(recc_list))
         
         response = {'status' : 'OK'}
         print (response)
