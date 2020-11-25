@@ -1,0 +1,262 @@
+import streamlit as st
+import pandas as pd
+import redis
+import hashlib
+import os
+import requests
+import SessionState
+import json, jsonpickle
+import requests
+
+#from streamlit.ScriptRunner import StopException, RerunException
+
+
+##
+## Configure test vs. production
+##
+redisHost = os.getenv("REDIS_HOST") or "localhost"
+restHost = os.getenv("REST") or "localhost:5000"
+addr = "http://" + restHost
+
+#redis db connections
+genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
+loginDb = redis.StrictRedis(host=redisHost, db=1, decode_responses=True)    # userName -> [passwordHash, userId]
+activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
+movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl]
+userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
+userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
+
+
+
+# Security
+def make_hashes(password):
+	return hashlib.sha256(str.encode(password)).hexdigest()
+
+def check_hashes(password,hashed_text):
+	if make_hashes(password) == hashed_text:
+		return hashed_text
+	return False
+
+def render_movie_list(login_userid, total_movies, rec_dict):
+	cols = st.beta_columns(12)
+	rating_list = []
+	ind = 0
+	for i in range(total_movies/6):
+		for j in range(0, 12, 2):
+			movieId = userMovieDb.lindex(login_userid, ind)
+			movieName = movieDb.lindex(movieId, 0)
+			movieImg = movieDb.lindex(movieId, 1)
+			cols[j].image(movieImg, caption=movieName, width=100)
+			v = 0.0
+			if rec_dict.get(movieId) is not None:
+				v = rec_dict.get(movieId)
+			
+			val = cols[j].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value=v, format='%.1f', key=ind)
+			rating_list.append(val)
+			ind += 1
+			if ind == total_movies:
+				return rating_list
+	return rating_list
+
+
+def display_rated_movies(login_userid, rec_dict):
+	cols = st.beta_columns(12)
+	ind = 0
+	total_movies = len(rec_dict)
+	for i in range(total_movies/6):
+		for j in range(0, 12, 2):
+			movieId = rect_dict.keys()[ind]
+			movieName = movieDb.lindex(movieId, 0)
+			movieImg = movieDb.lindex(movieId, 1)
+			cols[j].image(movieImg, caption=movieName, width=100)
+			rating = rec_dict.get(movieId)
+			cols[j].text_input("My Rating", value=rating, key=ind)
+			ind += 1
+			if ind == total_movies:
+				return
+
+
+def display_recommendations(login_userid):
+	cols = st.beta_columns(12)
+	ind = 0
+	total_movies = userReccDb.llen(login_userid)
+	for i in range(total_movies/6):
+		for j in range(0, 12, 2):
+			movieId = userReccDb.llindex(login_userid, ind)
+			movieName = movieDb.lindex(movieId, 0)
+			movieImg = movieDb.lindex(movieId, 1)
+			cols[j].image(movieImg, caption=movieName, width=100)
+			ind += 1
+			if ind == total_movies:
+				return
+
+
+def main():
+	"""Movie Recommender App"""
+	global latest_user_id
+
+	st.set_page_config(layout="wide")
+
+	st.title("Movie Recommender System")
+
+	menu = ["Home","Login","SignUp"]
+	choice = st.sidebar.selectbox("Menu",menu)
+
+	session_state = SessionState.get(logout=False)
+
+	if choice == "Home":
+		st.subheader("Home")
+		cols = st.beta_columns(12)
+		list = {}
+		ind = 0
+		for j in range(2):
+			for i in range(0, 12, 2):
+				cols[i].image("https://s3.gaming-cdn.com/images/products/4889/orig/assassins-creed-brotherhood-deluxe-edition-cover.jpg", caption="Assassins Creed", width=100)
+				val = cols[i].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value = 0.5, format='%.1f', key=ind)
+				ind += 1
+				#entry = {'title':'AC', 'rating': val}
+				list['AC'] = val
+		st.write(list)
+
+	elif choice == "Login":
+		st.subheader("Login Section")
+
+		if session_state.logout:
+			session_state.logout = False
+
+		else:
+			username = st.sidebar.text_input("username")
+			password = st.sidebar.text_input("password",type='password')
+			login_checkbox = st.sidebar.empty()
+			
+			if login_checkbox.checkbox("Login") and not session_state.logout:
+				# if password == '12345':
+				
+				hashed_pswd = make_hashes(password)
+				login_password = loginDb.lindex(username, 0)
+
+				if login_password == check_hashes(password,hashed_pswd):
+
+					#session_state.logout = True
+					if st.checkbox("Logout"):
+						#login_checkbox.checkbox("Login", False)
+						st.write("Logged out successfully")
+						session_state.logout = True
+						if st.button("Login Again!"):
+							st.write("true")
+
+					else:
+
+						st.success("Logged In as {}".format(username))
+						login_userid = loginDb.lindex(username, 1)
+
+						task = st.selectbox("Task",["Movies watched","Movie Recommendations","Rate Movies"])
+						userInput = activeUserRatingDb.get(login_userid)
+
+						if task == "Movies watched":
+							if activeUserRatingDb.get(login_userid):
+								rec_dict = jsonpickle.loads(activeUserRatingDb.get(login_userid))
+								display_rated_movies(login_userid, rec_dict)
+
+							else:
+								st.subheader("Please rate movies.")
+
+						elif task == "Movie Recommendations":
+							if activeUserRatingDb.get(login_userid):
+								#REST api call for compute recommendations -
+								try:
+									headers = {'content-type': 'application/json'}
+									url = addr + '/compute/recommendations/' + login_userid
+									response = requests.post(url, headers=headers)
+									if json.loads(response.text)['status'] == 'OK':
+										display_recommendations(login_userid)
+
+									else:
+										st.write(json.loads(response.text)['status'])
+										st.button('Retry', key=1)
+								except Exception as e:
+									print (e)
+									st.error('Error Occurred:' + e)
+									st.button('Try Again', key=1)
+
+							else:
+								st.subheader("Please rate movies to get new recommendations.")
+
+						elif task == "Rate Movies":
+							#get genres - user should select upto 5 genres
+							genres = [genDb.lindex("genres", i) for i in range(0, genDb.llen("genres"))]
+							options = st.multiselect("Choose 5 Genres", genres)
+							if len(options) == 5:
+								#REST api call for compute movies to rate -
+								try:
+									headers = {'content-type': 'application/json'}
+									url = addr + '/compute/movies/' + login_userid
+									data = jsonpickle.encode(options)
+									response = requests.post(url, data=data, headers=headers)
+									if json.loads(response.text)['status'] == 'OK':
+										total_movies = userMovieDb.llen(login_userid)
+
+										#check if previous recommendation list exists for current user to update - otherwise create new
+										rec_dict = {}		#<movieId> <rating>
+										if activeUserRatingDb.get(login_userid):
+											rec_dict = jsonpickle.loads(activeUserRatingDb.get(login_userid))
+
+										ratings = []
+										if total_movies > 0:
+											ratings = render_movie_list(login_userid, total_movies, rec_dict)
+										if st.button("Submit"):
+											userInput = []
+											for i in ratings:
+												if i > 0:
+													index = ratings.index(i)
+													movieId = userMovieDb.lindex(login_userid, index)
+													#movieTitle = movieDb.lindex(movieId, 0)
+													rec_dict[movieId] = i
+													#entry = {'title': movieTitle, 'rating': i}
+											activeUserRatingDb.set(login_userid, jsonpickle.dumps(rec_dict))
+									else:
+										st.write(json.loads(response.text)['status'])
+										st.button('Retry', key=2)
+								
+								except Exception as e:
+									print (e)
+									st.error('Error Occurred:' + e)
+									st.button('Try Again', key=2)
+						
+				else:
+					st.warning("Incorrect Username/Password")
+
+			else:
+				session_state.logout = False
+
+
+	elif choice == "SignUp":
+		try:
+			st.subheader("Create New Account")
+			new_user = st.text_input("UserName")
+			new_password = st.text_input("Password",type='password')
+			if st.button("Signup"):
+				if(not loginDb.llen(new_user)):
+					loginDb.rpush(new_user, make_hashes(new_password), str(int(latest_user_id)+1))
+					st.success("You have successfully created a valid Account")
+					st.info("Go to Login Menu to login")
+					latest_user_id += 1
+					genDb.set("latest_user_id", int(latest_user_id))
+				else:
+					st.warning("User already exists. Please login.")
+
+		except Exception as e:
+			st.error("Error signing up:" + e)
+
+
+if __name__ == '__main__':
+	try:
+
+		latest_user_id = genDb.get("latest_user_id")
+		latest_movie_id = genDb.get("latest_movie_id")
+
+		main()
+	
+	except Exception as e:
+		#restart required
+		print("Exception occurred, need restart...\nDetail:\n%s" % e)

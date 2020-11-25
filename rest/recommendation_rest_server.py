@@ -1,0 +1,224 @@
+from flask import Flask, request, Response
+import pickle, jsonpickle
+import pandas as pd
+import redis
+import os
+
+def initialize_application():
+    global genres
+    try:
+        #adding genres to DB0 <genres><[genres list]
+        if not genDb.llen("genres"):
+            for i in genres:
+                genDb.rpush("genres", i)
+            print ("genres loaded to DB0.")
+        else:
+            print ("genres list exist in DB0. Loading not required")
+        
+        #Read movies, ratings and links csv
+        ratings_df = pd.read_csv("../dataset/ml_25m/ratings.csv")
+        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
+        links_df = pd.read_csv("../dataset/ml_25m/links.csv")
+        #genDb.set("movies_df", pickle.dumps(movies_df))
+        #genDb.set("ratings_df", pickle.dumps(ratings_df))
+        #genDb.set("links_df", pickle.dumps(links_df))
+        print ("Dataframes loaded.")
+
+        #Store latest user and movie Id
+        latest_user_id =  max(ratings_df["userId"].max(), genDb.get("latest_user_id")) if genDb.get("latest_user_id") else ratings_df["userId"].max()
+        latest_movie_id =  max(ratings_df["movieId"].max(), genDb.get("latest_movie_id")) if genDb.get("latest_movie_id") else ratings_df["movieId"].max()
+        genDb.set("latest_user_id", int(latest_user_id))
+        genDb.set("latest_movie_id", int(latest_movie_id))
+        print ("Latest user id:{}".format(latest_user_id))
+        print ("Latest movie id:{}".format(latest_movie_id))
+
+        #Store movie details in movieDb
+        movie_dict = movieDb.get("movie_dict") or {}
+        for i,j in enumerate(links_df['movieId']):
+            imgUrl = links_df['imglink'][i]
+            movie_name = movies_df['title'][i]
+            movie_dict[j] = [movie_name, imgUrl]
+            #movieDb.rpush(j,movie_name)
+            #movieDb.rpush(j, imgUrl)
+        movieDb.set("movie_dict", movie_dict)
+        print ("MovieDB populated.")
+
+
+
+    except Exception as e:
+        print ("Error, need restart for components to work properly: {}".format(e))
+
+# Initialize the Flask application
+app = Flask(__name__)
+
+##
+## Configure test vs. production
+##
+redisHost = os.getenv("REDIS_HOST") or "localhost"
+
+#db connections
+genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
+activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
+movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl]
+userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
+userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
+
+# route http posts to this method
+@app.route('/compute/movies/<userid>', methods=['POST'])
+def compute_movies(userid):
+    try:
+        print ("/compute/movies api call started")
+        r = request
+        genre_list = jsonpickle.loads(r.data)
+        print (genre_list)
+        #movies_df = pickle.loads(genDb.get("movies_df"))
+        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
+        result = []
+        for i in genre_list:
+            user_movies_df = movies_df[movies_df['genres'].str.contains(i)]
+            result += user_movies_df['movieId'].tolist()
+        print (len(result))
+        for i in list(dict.fromkeys(result)):
+            userMovieDb.rpush(userid, i)
+
+        response = {'status' : 'OK'}
+        print (response)
+
+    except Exception as e:
+        print(e)
+        response = { 'status' : 'error'}
+
+    # encode response using jsonpickle
+    response_pickled = jsonpickle.encode(response)
+
+    return Response(response=response_pickled, status=200, mimetype="application/json")
+
+
+
+# route http posts to this method
+@app.route('/compute/recommendations/<userid>', methods=['POST'])
+def compute_recommendations(userid):
+    try:
+        print ("/compute/recommendations/ api call started")
+        #preprocessing
+        #movies_df = pickle.loads(genDb.get("movies_df"))
+        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
+        #ratings_df = pickle.loads(genDb.get("ratings_df"))
+        ratings_df = pd.read_csv("../dataset/ml_25m/ratings.csv")
+        ratings_df = ratings_df.drop('timestamp', 1)
+        print (ratings_df.head())
+        print (movies_df.head())
+
+        user_dict = jsonpickle.loads(activeUserRatingDb.get(userid))
+        userInput = []
+        for key in user_dict.keys():
+            entry = {'title': movieDb.lindex(key, 0), 'rating': user_dict[key]}
+            userInput.append(entry)
+        inputMovies = pd.DataFrame(userInput)
+        print (inputMovies)
+
+        #collaborative filtering begins
+        #---------------------------------------------------------------------------------------------------------------------------
+        #---------------------------------------------------------------------------------------------------------------------------
+        #Filtering out the movies by title
+        inputId = movies_df[movies_df['title'].isin(inputMovies['title'].tolist())]
+        #Then merging it so we can get the movieId. It's implicitly merging it by title.
+        inputMovies = pd.merge(inputId, inputMovies)
+        #Dropping information we won't use from the input dataframe
+        inputMovies = inputMovies.drop('year', 1)
+        print (inputMovies)
+        #Filtering out users that have watched movies that the input has watched and storing it
+        userSubset = ratings_df[ratings_df['movieId'].isin(inputMovies['movieId'].tolist())]
+        print (userSubset.head())
+        #Groupby creates several sub dataframes where they all have the same value in the column specified as the parameter
+        userSubsetGroup = userSubset.groupby(['userId'])
+        print (userSubsetGroup.get_group(1130))
+        #Sorting it so users with movie most in common with the input will have priority
+        userSubsetGroup = sorted(userSubsetGroup,  key=lambda x: len(x[1]), reverse=True)
+        print (userSubsetGroup[0:3])
+        #Taking 100 users
+        userSubsetGroup = userSubsetGroup[0:100]
+
+        #Store the Pearson Correlation in a dictionary, where the key is the user Id and the value is the coefficient
+        pearsonCorrelationDict = {}
+
+        #For every user group in our subset
+        for name, group in userSubsetGroup:
+            #Let's start by sorting the input and current user group so the values aren't mixed up later on
+            group = group.sort_values(by='movieId')
+            inputMovies = inputMovies.sort_values(by='movieId')
+            #Get the N for the formula
+            nRatings = len(group)
+            #Get the review scores for the movies that they both have in common
+            temp_df = inputMovies[inputMovies['movieId'].isin(group['movieId'].tolist())]
+            #And then store them in a temporary buffer variable in a list format to facilitate future calculations
+            tempRatingList = temp_df['rating'].tolist()
+            #Let's also put the current user group reviews in a list format
+            tempGroupList = group['rating'].tolist()
+            #Now let's calculate the pearson correlation between two users, so called, x and y
+            Sxx = sum([i**2 for i in tempRatingList]) - pow(sum(tempRatingList),2)/float(nRatings)
+            Syy = sum([i**2 for i in tempGroupList]) - pow(sum(tempGroupList),2)/float(nRatings)
+            Sxy = sum( i*j for i, j in zip(tempRatingList, tempGroupList)) - sum(tempRatingList)*sum(tempGroupList)/float(nRatings)
+            
+            #If the denominator is different than zero, then divide, else, 0 correlation.
+            if Sxx != 0 and Syy != 0:
+                pearsonCorrelationDict[name] = Sxy/sqrt(Sxx*Syy)
+            else:
+                pearsonCorrelationDict[name] = 0
+            
+        pearsonDF = pd.DataFrame.from_dict(pearsonCorrelationDict, orient='index')
+        pearsonDF.columns = ['similarityIndex']
+        pearsonDF['userId'] = pearsonDF.index
+        pearsonDF.index = range(len(pearsonDF))
+        print (pearsonDF.head())
+        #Get the top 50 users that are most similar to the input.
+        topUsers=pearsonDF.sort_values(by='similarityIndex', ascending=False)[0:50]
+        print (topUsers.head())
+
+        topUsersRating=topUsers.merge(ratings_df, left_on='userId', right_on='userId', how='inner')
+
+        #Multiplies the similarity by the user's ratings
+        topUsersRating['weightedRating'] = topUsersRating['similarityIndex']*topUsersRating['rating']
+        print (topUsersRating.head())
+        #Applies a sum to the topUsers after grouping it up by userId
+        tempTopUsersRating = topUsersRating.groupby('movieId').sum()[['similarityIndex','weightedRating']]
+        tempTopUsersRating.columns = ['sum_similarityIndex','sum_weightedRating']
+        print (tempTopUsersRating.head())
+
+        #Creates an empty dataframe
+        recommendation_df = pd.DataFrame()
+        #Now we take the weighted average
+        recommendation_df['weighted average recommendation score'] = tempTopUsersRating['sum_weightedRating']/tempTopUsersRating['sum_similarityIndex']
+        recommendation_df['movieId'] = tempTopUsersRating.index
+
+        recommendation_df = recommendation_df.sort_values(by='weighted average recommendation score', ascending=False)
+        print (recommendation_df.head())
+        #Taking top 20 recommendations
+        #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
+
+        #Store top 20 movie recommendations in the userReccDb
+        for i in recommendation_df.head(20)['movieId']:
+            userReccDb.rpush(userid, i)
+        
+        response = {'status' : 'OK'}
+        print (response)
+
+    except Exception as e:
+        print(e)
+        response = { 'status' : 'error'}
+
+    # encode response using jsonpickle
+    response_pickled = jsonpickle.encode(response)
+
+    return Response(response=response_pickled, status=200, mimetype="application/json")
+    
+#initia;ize application
+genres = ["Adventure", "Animation", "Children", "Comedy", "Fantasy", "Romance", "Drama", "Documentary", "Action", "Crime", "Thriller",
+        "Musical", "War", "Mystery", "Sci-Fi", "Western", "IMAX", "Horror", "Film-Noir"]
+
+print ("Initializing application...")
+
+initialize_application()
+
+# start flask app
+app.run(host="0.0.0.0", port=5000)
