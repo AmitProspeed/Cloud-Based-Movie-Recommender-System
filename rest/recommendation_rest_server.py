@@ -223,11 +223,12 @@ def compute_recommendations(userid):
             #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
 
             #Store top 20 movie recommendations in the userReccDb
-            recc_list = []
-            for i in recommendation_df.head(20)['movieId']:
-                recc_list.append(i)
-            print (recc_list)
-            userReccDb.set(userid, jsonpickle.dumps(recc_list))
+            #recc_list = []
+            #for i in recommendation_df.head(20)['movieId']:
+                #recc_list.append(i)
+            print ("Total number of recommendations for userId {} - {}".format(userid, len(recommendation_df['movieId'])))
+            print (recommendation_df.head(10)['movieId'])
+            userReccDb.set(userid, jsonpickle.dumps(recommendation_df['movieId'].tolist()))
 
         else:
             print ('Not computing new recommendations as user {} active ratings unchanged'.format(userid))

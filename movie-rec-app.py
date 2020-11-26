@@ -26,7 +26,7 @@ activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=Tr
 movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
 userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
 userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
-
+print ("hello")
 
 
 # Security
@@ -39,18 +39,16 @@ def check_hashes(password,hashed_text):
 	return False
 
 #Renders 'Rate Movies' section
-def render_movie_list(login_userid, total_movies, rec_dict):
+def render_movie_list(login_userid, start_index, rec_dict):
 	cols = st.beta_columns(12)
 	rating_list = []
 	ind = 0
 	movie_dict = json.loads(movieDb.get("movie_dict"))
-	print (movie_dict.get('1')[3])
 	user_movie_list = json.loads(userMovieDb.get(login_userid))
 	total_movies = 24
-	st.write("Showing {} movies to rate".format(total_movies))
 	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = str(user_movie_list[ind])
+			movieId = str(user_movie_list[start_index + ind])
 			movieName = movie_dict[movieId][0]
 			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
@@ -63,12 +61,13 @@ def render_movie_list(login_userid, total_movies, rec_dict):
 			v = 0.0
 			if rec_dict.get(movieId) is not None:
 				v = rec_dict.get(movieId)
-			val = cols[j].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value=v, format='%.1f', key=ind)
-			rating_list.append(val)
+			val = cols[j].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value=v, format='%.1f', key=start_index + ind)
+			if val > 0.0:
+				rec_dict[movieId] = val
 			ind += 1
 			if ind == total_movies:
-				return rating_list
-	return rating_list
+				return rec_dict
+	return rec_dict
 
 #Renders 'Movies Watched' section
 def display_rated_movies(login_userid, rec_dict):
@@ -87,7 +86,6 @@ def display_rated_movies(login_userid, rec_dict):
 			year = movie_dict[movieId][3]
 			cols[j].image(movieImg, width=100)
 			rating = rec_dict.get(movieId)
-			#cols[j].text_input("My Rating", value=rating, key=ind)
 			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
 				st.write(movieName)
@@ -98,15 +96,13 @@ def display_rated_movies(login_userid, rec_dict):
 				return
 
 #Renders 'Movie Recommendations' section
-def display_recommendations(login_userid):
+def display_recommendations(login_userid, start_index, total_movies, recc_list):
 	cols = st.beta_columns(12)
 	ind = 0
-	recc_list = json.loads(userReccDb.get(login_userid))
-	total_movies = len(recc_list)
 	movie_dict = json.loads(movieDb.get("movie_dict"))
 	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = str(recc_list[ind])
+			movieId = str(recc_list[start_index+ind])
 			movieName = movie_dict[movieId][0]
 			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
@@ -132,10 +128,13 @@ def main():
 	menu = ["Home","Login","SignUp"]
 	choice = st.sidebar.selectbox("Menu",menu)
 
-	session_state = SessionState.get(logout=False)
+	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={})
 
 	if choice == "Home":
 		st.subheader("Home")
+		session_state.show_movie_count = 0
+		session_state.show_reco_count = 0
+		session_state.rec_dict = {}
 		cols = st.beta_columns(12)
 		list = {}
 		ind = 0
@@ -175,6 +174,9 @@ def main():
 						#login_checkbox.checkbox("Login", False)
 						st.write("Logged out successfully")
 						session_state.logout = True
+						session_state.show_movie_count = 0
+						session_state.show_reco_count = 0
+						session_state.rec_dict = {}
 						if st.button("Login Again!"):
 							st.write("true")
 
@@ -204,15 +206,25 @@ def main():
 									with st.spinner("Computing your personalized recommendations. Please Wait.."):
 										response = requests.post(url, headers=headers)
 									if json.loads(response.text)['status'] == 'OK':
+										if st.button("Show More", key=1):
+											session_state.show_reco_count += 24
+										if st.button("Back", key=1):
+											session_state.show_reco_count = max(0, session_state.show_reco_count-24)
 										with st.spinner("Listing data. Please Wait.."):
-											display_recommendations(login_userid)
+											st.write("Showing top {} recommendations".format(str(session_state.show_reco_count) + "-" + str(session_state.show_reco_count+24)))
+											recc_list = json.loads(userReccDb.get(login_userid))
+											if session_state.show_reco_count < (len(recc_list)-24):
+												display_recommendations(login_userid, session_state.show_reco_count, 24, recc_list)
+											else:
+												count = len(recc_list) - session_state.show_reco_count
+												display_recommendations(login_userid, session_state.show_reco_count, count, recc_list)
 											genDb.set(login_userid, 'false')		#flag to set compute new recommendations true or false
 
 									else:
 										st.write(json.loads(response.text)['status'])
 										st.button('Retry', key=1)
 								except Exception as e:
-									st.error('Error Occurred:' + e)
+									st.error('Error Occurred')
 									print (traceback.print_exc())
 									st.button('Try Again', key=1)
 
@@ -235,23 +247,32 @@ def main():
 										total_movies = len(user_movie_list)
 
 										#check if previous recommendation list exists for current user to update - otherwise create new
-										rec_dict = {}		#<movieId> <rating>
+										original_dict = {}		#<movieId> <rating>
 										if activeUserRatingDb.get(login_userid):
-											rec_dict = json.loads(activeUserRatingDb.get(login_userid))
+											original_dict = json.loads(activeUserRatingDb.get(login_userid))
+											if not session_state.rec_dict:
+												session_state.rec_dict = original_dict
 
 										ratings = []
 										if total_movies > 0:
+											if st.button("Show More", key=2):
+												session_state.show_movie_count += 24
+											if st.button("Back", key=2):
+												session_state.show_movie_count = max(0, session_state.show_movie_count-24)
 											with st.spinner("Fetching data. Please Wait.."):
-												ratings = render_movie_list(login_userid, total_movies, rec_dict)
+												st.write("Showing {} movies to rate".format(str(session_state.show_movie_count) + "-" + str(session_state.show_movie_count+24)))
+												if session_state.show_movie_count < (total_movies-24):
+													session_state.rec_dict = render_movie_list(login_userid, session_state.show_movie_count, session_state.rec_dict)
+
 										if st.button("Submit"):
-											userInput = []
-											for index, i in enumerate(ratings):
-												if i > 0.0:
-													movieId = user_movie_list[index]
-													#movieTitle = movieDb.lindex(movieId, 0)
-													rec_dict[movieId] = i
-													#entry = {'title': movieTitle, 'rating': i}
-											activeUserRatingDb.set(login_userid, jsonpickle.dumps(rec_dict))
+											if original_dict:		#update
+												for key in session_state.rec_dict:
+													original_dict[key] = session_state.rec_dict[key]
+											else:
+												original_dict = session_state.rec_dict		#create new
+
+											activeUserRatingDb.set(login_userid, jsonpickle.dumps(original_dict))	#add to db
+											session_state.rec_dict = {}		#clear temp dictionary
 											genDb.set(login_userid, 'true')		#flag to set compute new recommendations true or false
 											st.success("You have successfully submitted your ratings")
 									else:
@@ -259,7 +280,7 @@ def main():
 										st.button('Retry', key=2)
 								
 								except Exception as e:
-									st.error('Error Occurred:' + e)
+									st.error('Error Occurred')
 									print (traceback.print_exc())
 									st.button('Try Again', key=2)
 						
@@ -272,6 +293,9 @@ def main():
 
 	elif choice == "SignUp":
 		try:
+			session_state.show_movie_count = 0
+			session_state.show_reco_count = 0
+			session_state.rec_dict = {}
 			st.subheader("Create New Account")
 			new_user = st.text_input("UserName")
 			new_password = st.text_input("Password",type='password')
@@ -285,7 +309,7 @@ def main():
 					st.warning("User already exists. Please login.")
 
 		except Exception as e:
-			st.error("Error signing up:" + e)
+			st.error("Error signing up")
 			print (traceback.print_exc())
 
 
