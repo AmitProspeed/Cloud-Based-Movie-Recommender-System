@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import redis
+import traceback
 import hashlib
 import os
 import requests
@@ -22,7 +23,7 @@ addr = "http://" + restHost
 genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
 loginDb = redis.StrictRedis(host=redisHost, db=1, decode_responses=True)    # userName -> [passwordHash, userId]
 activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
-movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl]
+movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
 userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
 userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
 
@@ -37,11 +38,13 @@ def check_hashes(password,hashed_text):
 		return hashed_text
 	return False
 
+#Renders 'Rate Movies' section
 def render_movie_list(login_userid, total_movies, rec_dict):
 	cols = st.beta_columns(12)
 	rating_list = []
 	ind = 0
 	movie_dict = json.loads(movieDb.get("movie_dict"))
+	print (movie_dict.get('1')[3])
 	user_movie_list = json.loads(userMovieDb.get(login_userid))
 	total_movies = 24
 	st.write("Showing {} movies to rate".format(total_movies))
@@ -49,11 +52,14 @@ def render_movie_list(login_userid, total_movies, rec_dict):
 		for j in range(0, 12, 2):
 			movieId = str(user_movie_list[ind])
 			movieName = movie_dict[movieId][0]
+			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
+			year = movie_dict[movieId][3]
 			cols[j].image(movieImg, width=100)
-			expander = cols[j].beta_expander("Info", expanded=False)
+			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
 				st.write(movieName)
+				st.write(year)
 			v = 0.0
 			if rec_dict.get(movieId) is not None:
 				v = rec_dict.get(movieId)
@@ -64,7 +70,7 @@ def render_movie_list(login_userid, total_movies, rec_dict):
 				return rating_list
 	return rating_list
 
-
+#Renders 'Movies Watched' section
 def display_rated_movies(login_userid, rec_dict):
 	cols = st.beta_columns(12)
 	movie_id_list = list(rec_dict.keys())
@@ -76,19 +82,22 @@ def display_rated_movies(login_userid, rec_dict):
 		for j in range(0, 12, 2):
 			movieId = str(movie_id_list[ind])
 			movieName = movie_dict[movieId][0]
+			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
+			year = movie_dict[movieId][3]
 			cols[j].image(movieImg, width=100)
 			rating = rec_dict.get(movieId)
 			#cols[j].text_input("My Rating", value=rating, key=ind)
-			expander = cols[j].beta_expander("Info", expanded=False)
+			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
 				st.write(movieName)
+				st.write(year)
 				st.write("My rating: {}".format(rating))
 			ind += 1
 			if ind == total_movies:
 				return
 
-
+#Renders 'Movie Recommendations' section
 def display_recommendations(login_userid):
 	cols = st.beta_columns(12)
 	ind = 0
@@ -99,11 +108,14 @@ def display_recommendations(login_userid):
 		for j in range(0, 12, 2):
 			movieId = str(recc_list[ind])
 			movieName = movie_dict[movieId][0]
+			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
+			year = movie_dict[movieId][3]
 			cols[j].image(movieImg, width=100)
-			expander = cols[j].beta_expander("Info", expanded=False)
+			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
 				st.write(movieName)
+				st.write(year)
 			ind += 1
 			if ind == total_movies:
 				return
@@ -176,8 +188,9 @@ def main():
 
 						if task == "Movies watched":
 							if activeUserRatingDb.get(login_userid):
-								rec_dict = json.loads(activeUserRatingDb.get(login_userid))
-								display_rated_movies(login_userid, rec_dict)
+								with st.spinner("Fetching data. Please Wait.."):
+									rec_dict = json.loads(activeUserRatingDb.get(login_userid))
+									display_rated_movies(login_userid, rec_dict)
 
 							else:
 								st.subheader("Please rate movies.")
@@ -188,16 +201,19 @@ def main():
 								try:
 									headers = {'content-type': 'application/json'}
 									url = addr + '/compute/recommendations/' + login_userid
-									response = requests.post(url, headers=headers)
+									with st.spinner("Computing your personalized recommendations. Please Wait.."):
+										response = requests.post(url, headers=headers)
 									if json.loads(response.text)['status'] == 'OK':
-										display_recommendations(login_userid)
+										with st.spinner("Listing data. Please Wait.."):
+											display_recommendations(login_userid)
+											genDb.set(login_userid, 'false')		#flag to set compute new recommendations true or false
 
 									else:
 										st.write(json.loads(response.text)['status'])
 										st.button('Retry', key=1)
 								except Exception as e:
-									print (e)
 									st.error('Error Occurred:' + e)
+									print (traceback.print_exc())
 									st.button('Try Again', key=1)
 
 							else:
@@ -225,7 +241,8 @@ def main():
 
 										ratings = []
 										if total_movies > 0:
-											ratings = render_movie_list(login_userid, total_movies, rec_dict)
+											with st.spinner("Fetching data. Please Wait.."):
+												ratings = render_movie_list(login_userid, total_movies, rec_dict)
 										if st.button("Submit"):
 											userInput = []
 											for index, i in enumerate(ratings):
@@ -235,14 +252,15 @@ def main():
 													rec_dict[movieId] = i
 													#entry = {'title': movieTitle, 'rating': i}
 											activeUserRatingDb.set(login_userid, jsonpickle.dumps(rec_dict))
+											genDb.set(login_userid, 'true')		#flag to set compute new recommendations true or false
 											st.success("You have successfully submitted your ratings")
 									else:
 										st.write(json.loads(response.text)['status'])
 										st.button('Retry', key=2)
 								
 								except Exception as e:
-									print (e)
 									st.error('Error Occurred:' + e)
+									print (traceback.print_exc())
 									st.button('Try Again', key=2)
 						
 				else:
@@ -268,6 +286,7 @@ def main():
 
 		except Exception as e:
 			st.error("Error signing up:" + e)
+			print (traceback.print_exc())
 
 
 if __name__ == '__main__':
@@ -281,3 +300,4 @@ if __name__ == '__main__':
 	except Exception as e:
 		#restart required
 		print("Exception occurred, need restart...\nDetail:\n%s" % e)
+		print (traceback.print_exc())

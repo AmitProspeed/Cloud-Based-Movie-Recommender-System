@@ -1,12 +1,28 @@
 from flask import Flask, request, Response
 import pickle, json, jsonpickle
 import pandas as pd
+import traceback
 import redis
 import os
 
 #Math functions, we'll only need the sqrt function so let's import only that
 from math import sqrt
 import numpy as np
+
+# Initialize the Flask application
+app = Flask(__name__)
+
+##
+## Configure test vs. production
+##
+redisHost = os.getenv("REDIS_HOST") or "localhost"
+
+#db connections
+genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
+activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
+movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
+userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
+userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
 
 def initialize_application():
     global genres, ratings_df, movies_df, links_df
@@ -29,7 +45,7 @@ def initialize_application():
 
         #preprocessing
         #Using regular expressions to find a year stored between parentheses
-        #We specify the parantheses so we don't conflict with movies that have years in their titles
+        #Store the years in a separate column
         movies_df['year'] = movies_df.title.str.extract('(\(\d\d\d\d\))',expand=False)
         #Removing the parentheses
         movies_df['year'] = movies_df.year.str.extract('(\d\d\d\d)',expand=False)
@@ -58,31 +74,17 @@ def initialize_application():
             if movie_dict.get(j) is None:
                 imgUrl = links_df['imglink'][i]
                 movie_name = movies_df['title'][i]
-                movie_dict[j] = [movie_name, imgUrl]
+                genres = movies_df['genres'][i]
+                year = movies_df['year'][i]
+                movie_dict[j] = [movie_name, imgUrl, genres, year]
                 #movieDb.rpush(j,movie_name)
                 #movieDb.rpush(j, imgUrl)
         movieDb.set("movie_dict", jsonpickle.dumps(movie_dict))
         print ("MovieDB populated.")
 
-
-
     except Exception as e:
-        print ("Error, need restart for components to work properly: {}".format(e))
-
-# Initialize the Flask application
-app = Flask(__name__)
-
-##
-## Configure test vs. production
-##
-redisHost = os.getenv("REDIS_HOST") or "localhost"
-
-#db connections
-genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
-activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
-movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl]
-userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
-userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
+        print ("Error, need restart for components to work properly")
+        print (traceback.print_exc())
 
 # route http posts to this method
 @app.route('/compute/movies/<userid>', methods=['POST'])
@@ -99,19 +101,17 @@ def compute_movies(userid):
         for i in genre_list:
             user_movies_df = movies_df[movies_df['genres'].str.contains(i)]
             result += user_movies_df['movieId'].tolist()
-        print (len(result))
         movie_list = []
         for i in list(dict.fromkeys(result)):
             movie_list.append(i)
-        print (len(movie_list))
         userMovieDb.set(userid, jsonpickle.dumps(movie_list))
 
         response = {'status' : 'OK'}
         print (response)
 
     except Exception as e:
-        print(e)
         response = { 'status' : 'error'}
+        print (traceback.print_exc())
 
     # encode response using jsonpickle
     response_pickled = jsonpickle.encode(response)
@@ -126,111 +126,118 @@ def compute_recommendations(userid):
     global ratings_df, movies_df
     try:
         print ("/compute/recommendations/ api call started")
+
+        if genDb.get(userid) == 'true':		#flag to check compute new recommendations for user based on changes in his active ratings
+
+            print ("Computing new recommendations for user {} based on active ratings".format(userid))
         
-        print (ratings_df.head())
-        print (movies_df.head())
+            print (ratings_df.head())
+            print (movies_df.head())
 
-        user_dict = jsonpickle.loads(activeUserRatingDb.get(userid))
-        userInput = []
-        movie_dict = jsonpickle.loads(movieDb.get("movie_dict"))
-        for key in user_dict.keys():
-            entry = {'title': movie_dict[key][0], 'rating': user_dict[key]}
-            userInput.append(entry)
-        inputMovies = pd.DataFrame(userInput)
-        print (inputMovies)
+            user_dict = jsonpickle.loads(activeUserRatingDb.get(userid))
+            userInput = []
+            movie_dict = jsonpickle.loads(movieDb.get("movie_dict"))
+            for key in user_dict.keys():
+                entry = {'title': movie_dict[key][0], 'rating': user_dict[key]}
+                userInput.append(entry)
+            inputMovies = pd.DataFrame(userInput)
+            print (inputMovies)
 
-        #collaborative filtering begins
-        #---------------------------------------------------------------------------------------------------------------------------
-        #---------------------------------------------------------------------------------------------------------------------------
-        #Filtering out the movies by title
-        inputId = movies_df[movies_df['title'].isin(inputMovies['title'].tolist())]
-        #Then merging it so we can get the movieId. It's implicitly merging it by title.
-        inputMovies = pd.merge(inputId, inputMovies)
-        #Dropping information we won't use from the input dataframe
-        #inputMovies = inputMovies.drop('year', 1)
-        print (inputMovies)
-        #Filtering out users that have watched movies that the input has watched and storing it
-        userSubset = ratings_df[ratings_df['movieId'].isin(inputMovies['movieId'].tolist())]
-        print (userSubset.head())
-        #Groupby creates several sub dataframes where they all have the same value in the column specified as the parameter
-        userSubsetGroup = userSubset.groupby(['userId'])
-        #print (userSubsetGroup.get_group(1130))
-        #Sorting it so users with movie most in common with the input will have priority
-        userSubsetGroup = sorted(userSubsetGroup,  key=lambda x: len(x[1]), reverse=True)
-        print (userSubsetGroup[0:3])
-        #Taking 100 users
-        userSubsetGroup = userSubsetGroup[0:100]
+            #collaborative filtering begins
+            #---------------------------------------------------------------------------------------------------------------------------
+            #---------------------------------------------------------------------------------------------------------------------------
+            #Filtering out the movies by title
+            inputId = movies_df[movies_df['title'].isin(inputMovies['title'].tolist())]
+            #Then merging it so we can get the movieId. It's implicitly merging it by title.
+            inputMovies = pd.merge(inputId, inputMovies)
+            #Dropping information we won't use from the input dataframe
+            #inputMovies = inputMovies.drop('year', 1)
+            print (inputMovies)
+            #Filtering out users that have watched movies that the input has watched and storing it
+            userSubset = ratings_df[ratings_df['movieId'].isin(inputMovies['movieId'].tolist())]
+            print (userSubset.head())
+            #Groupby creates several sub dataframes where they all have the same value in the column specified as the parameter
+            userSubsetGroup = userSubset.groupby(['userId'])
+            #print (userSubsetGroup.get_group(1130))
+            #Sorting it so users with movie most in common with the input will have priority
+            userSubsetGroup = sorted(userSubsetGroup,  key=lambda x: len(x[1]), reverse=True)
+            print (userSubsetGroup[0:3])
+            #Taking 100 users
+            userSubsetGroup = userSubsetGroup[0:100]
 
-        #Store the Pearson Correlation in a dictionary, where the key is the user Id and the value is the coefficient
-        pearsonCorrelationDict = {}
+            #Store the Pearson Correlation in a dictionary, where the key is the user Id and the value is the coefficient
+            pearsonCorrelationDict = {}
 
-        #For every user group in our subset
-        for name, group in userSubsetGroup:
-            #Let's start by sorting the input and current user group so the values aren't mixed up later on
-            group = group.sort_values(by='movieId')
-            inputMovies = inputMovies.sort_values(by='movieId')
-            #Get the N for the formula
-            nRatings = len(group)
-            #Get the review scores for the movies that they both have in common
-            temp_df = inputMovies[inputMovies['movieId'].isin(group['movieId'].tolist())]
-            #And then store them in a temporary buffer variable in a list format to facilitate future calculations
-            tempRatingList = temp_df['rating'].tolist()
-            #Let's also put the current user group reviews in a list format
-            tempGroupList = group['rating'].tolist()
-            #Now let's calculate the pearson correlation between two users, so called, x and y
-            Sxx = sum([i**2 for i in tempRatingList]) - pow(sum(tempRatingList),2)/float(nRatings)
-            Syy = sum([i**2 for i in tempGroupList]) - pow(sum(tempGroupList),2)/float(nRatings)
-            Sxy = sum( i*j for i, j in zip(tempRatingList, tempGroupList)) - sum(tempRatingList)*sum(tempGroupList)/float(nRatings)
-            
-            #If the denominator is different than zero, then divide, else, 0 correlation.
-            if Sxx != 0 and Syy != 0:
-                pearsonCorrelationDict[name] = Sxy/sqrt(Sxx*Syy)
-            else:
-                pearsonCorrelationDict[name] = 0
-            
-        pearsonDF = pd.DataFrame.from_dict(pearsonCorrelationDict, orient='index')
-        pearsonDF.columns = ['similarityIndex']
-        pearsonDF['userId'] = pearsonDF.index
-        pearsonDF.index = range(len(pearsonDF))
-        print (pearsonDF.head())
-        #Get the top 50 users that are most similar to the input.
-        topUsers=pearsonDF.sort_values(by='similarityIndex', ascending=False)[0:50]
-        print (topUsers.head())
+            #For every user group in our subset
+            for name, group in userSubsetGroup:
+                #Let's start by sorting the input and current user group so the values aren't mixed up later on
+                group = group.sort_values(by='movieId')
+                inputMovies = inputMovies.sort_values(by='movieId')
+                #Get the N for the formula
+                nRatings = len(group)
+                #Get the review scores for the movies that they both have in common
+                temp_df = inputMovies[inputMovies['movieId'].isin(group['movieId'].tolist())]
+                #And then store them in a temporary buffer variable in a list format to facilitate future calculations
+                tempRatingList = temp_df['rating'].tolist()
+                #Let's also put the current user group reviews in a list format
+                tempGroupList = group['rating'].tolist()
+                #Now let's calculate the pearson correlation between two users, so called, x and y
+                Sxx = sum([i**2 for i in tempRatingList]) - pow(sum(tempRatingList),2)/float(nRatings)
+                Syy = sum([i**2 for i in tempGroupList]) - pow(sum(tempGroupList),2)/float(nRatings)
+                Sxy = sum( i*j for i, j in zip(tempRatingList, tempGroupList)) - sum(tempRatingList)*sum(tempGroupList)/float(nRatings)
+                
+                #If the denominator is different than zero, then divide, else, 0 correlation.
+                if Sxx != 0 and Syy != 0:
+                    pearsonCorrelationDict[name] = Sxy/sqrt(Sxx*Syy)
+                else:
+                    pearsonCorrelationDict[name] = 0
+                
+            pearsonDF = pd.DataFrame.from_dict(pearsonCorrelationDict, orient='index')
+            pearsonDF.columns = ['similarityIndex']
+            pearsonDF['userId'] = pearsonDF.index
+            pearsonDF.index = range(len(pearsonDF))
+            print (pearsonDF.head())
+            #Get the top 50 users that are most similar to the input.
+            topUsers=pearsonDF.sort_values(by='similarityIndex', ascending=False)[0:50]
+            print (topUsers.head())
 
-        topUsersRating=topUsers.merge(ratings_df, left_on='userId', right_on='userId', how='inner')
+            topUsersRating=topUsers.merge(ratings_df, left_on='userId', right_on='userId', how='inner')
 
-        #Multiplies the similarity by the user's ratings
-        topUsersRating['weightedRating'] = topUsersRating['similarityIndex']*topUsersRating['rating']
-        print (topUsersRating.head())
-        #Applies a sum to the topUsers after grouping it up by userId
-        tempTopUsersRating = topUsersRating.groupby('movieId').sum()[['similarityIndex','weightedRating']]
-        tempTopUsersRating.columns = ['sum_similarityIndex','sum_weightedRating']
-        print (tempTopUsersRating.head())
+            #Multiplies the similarity by the user's ratings
+            topUsersRating['weightedRating'] = topUsersRating['similarityIndex']*topUsersRating['rating']
+            print (topUsersRating.head())
+            #Applies a sum to the topUsers after grouping it up by userId
+            tempTopUsersRating = topUsersRating.groupby('movieId').sum()[['similarityIndex','weightedRating']]
+            tempTopUsersRating.columns = ['sum_similarityIndex','sum_weightedRating']
+            print (tempTopUsersRating.head())
 
-        #Creates an empty dataframe
-        recommendation_df = pd.DataFrame()
-        #Now we take the weighted average
-        recommendation_df['weighted average recommendation score'] = tempTopUsersRating['sum_weightedRating']/tempTopUsersRating['sum_similarityIndex']
-        recommendation_df['movieId'] = tempTopUsersRating.index
+            #Creates an empty dataframe
+            recommendation_df = pd.DataFrame()
+            #Now we take the weighted average
+            recommendation_df['weighted average recommendation score'] = tempTopUsersRating['sum_weightedRating']/tempTopUsersRating['sum_similarityIndex']
+            recommendation_df['movieId'] = tempTopUsersRating.index
 
-        recommendation_df = recommendation_df.sort_values(by='weighted average recommendation score', ascending=False)
-        print (recommendation_df.head())
-        #Taking top 20 recommendations
-        #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
+            recommendation_df = recommendation_df.sort_values(by='weighted average recommendation score', ascending=False)
+            print (recommendation_df.head())
+            #Taking top 20 recommendations
+            #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
 
-        #Store top 20 movie recommendations in the userReccDb
-        recc_list = []
-        for i in recommendation_df.head(20)['movieId']:
-            recc_list.append(i)
-        print (recc_list)
-        userReccDb.set(userid, jsonpickle.dumps(recc_list))
+            #Store top 20 movie recommendations in the userReccDb
+            recc_list = []
+            for i in recommendation_df.head(20)['movieId']:
+                recc_list.append(i)
+            print (recc_list)
+            userReccDb.set(userid, jsonpickle.dumps(recc_list))
+
+        else:
+            print ('Not computing new recommendations as user {} active ratings unchanged'.format(userid))
         
         response = {'status' : 'OK'}
         print (response)
 
     except Exception as e:
-        print(e)
         response = { 'status' : 'error'}
+        print (traceback.print_exc())
 
     # encode response using jsonpickle
     response_pickled = jsonpickle.encode(response)
