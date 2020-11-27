@@ -26,7 +26,6 @@ activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=Tr
 movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
 userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
 userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
-print ("hello")
 
 
 # Security
@@ -234,8 +233,8 @@ def main():
 						elif task == "Rate Movies":
 							#get genres - user should select upto 5 genres
 							genres = [genDb.lindex("genres", i) for i in range(0, genDb.llen("genres"))]
-							options = st.multiselect("Choose 5 Genres", genres)
-							if len(options) == 5:
+							options = st.multiselect("Choose atleast 5 Genres", genres)
+							if len(options) >= 5:
 								#REST api call for compute movies to rate -
 								try:
 									headers = {'content-type': 'application/json'}
