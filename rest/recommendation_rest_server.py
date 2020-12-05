@@ -19,10 +19,10 @@ redisHost = os.getenv("REDIS_HOST") or "localhost"
 
 #db connections
 genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
-activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
+activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><[rating,genre]>
 movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
-userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
-userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
+userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [[user genre filtered movieId,genre]]
+userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [[Recommended movieId,genre]]
 
 def initialize_application():
     global genres, ratings_df, movies_df, links_df
@@ -92,20 +92,27 @@ def compute_movies(userid):
     try:
         global movies_df
         print ("/compute/movies api call started")
-        r = request
-        genre_list = jsonpickle.loads(r.data)
-        print (genre_list)
-        #movies_df = pickle.loads(genDb.get("movies_df"))
-        #movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
-        result = []
-        for i in genre_list:
-            user_movies_df = movies_df[movies_df['genres'].str.contains(i)]
-            result += user_movies_df['movieId'].tolist()
-        movie_list = []
-        for i in list(dict.fromkeys(result)):
-            movie_list.append(i)
-        userMovieDb.set(userid, jsonpickle.dumps(movie_list))
+        if json.loads(genDb.get(userid))['rate']:
+            r = request
+            genre_list = jsonpickle.loads(r.data)
+            print (genre_list)
+            #movies_df = pickle.loads(genDb.get("movies_df"))
+            #movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
+            result = []
+            for i in genre_list:
+                user_movies_df = movies_df[movies_df['genres'].str.contains(i)]
+                result += user_movies_df['movieId'].tolist()
+            movie_list = []
+            movie_dict = json.loads(movieDb.get("movie_dict"))
+            for i in list(dict.fromkeys(result)):
+                genres = movie_dict[str(i)][2]
+                genres = genres.split("|")
+                movie_list.append([i,list(set(genres) & set(genre_list))[0]])
+            userMovieDb.set(userid, jsonpickle.dumps(movie_list))
 
+        else:
+            print ('Not computing new movies for genres as user {} genre selection unchanged'.format(userid))
+        
         response = {'status' : 'OK'}
         print (response)
 
@@ -127,7 +134,7 @@ def compute_recommendations(userid):
     try:
         print ("/compute/recommendations/ api call started")
 
-        if genDb.get(userid) == 'true':		#flag to check compute new recommendations for user based on changes in his active ratings
+        if json.loads(genDb.get(userid))['recc']:		#<userid><'recc':true/fasle, 'rate':true/false>
 
             print ("Computing new recommendations for user {} based on active ratings".format(userid))
         
@@ -138,7 +145,7 @@ def compute_recommendations(userid):
             userInput = []
             movie_dict = jsonpickle.loads(movieDb.get("movie_dict"))
             for key in user_dict.keys():
-                entry = {'title': movie_dict[key][0], 'rating': user_dict[key]}
+                entry = {'title': movie_dict[key][0], 'rating': float(user_dict[key][0])}
                 userInput.append(entry)
             inputMovies = pd.DataFrame(userInput)
             print (inputMovies)
@@ -223,12 +230,14 @@ def compute_recommendations(userid):
             #movies_df.loc[movies_df['movieId'].isin(recommendation_df.head(20)['movieId'].tolist())]
 
             #Store top 20 movie recommendations in the userReccDb
-            #recc_list = []
-            #for i in recommendation_df.head(20)['movieId']:
-                #recc_list.append(i)
+            recc_list = []
+            for i in recommendation_df['movieId']:
+                genres = movie_dict[str(i)][2]
+                genres = genres.split("|")
+                recc_list.append([i,genres[0]])
             print ("Total number of recommendations for userId {} - {}".format(userid, len(recommendation_df['movieId'])))
             print (recommendation_df.head(10)['movieId'])
-            userReccDb.set(userid, jsonpickle.dumps(recommendation_df['movieId'].tolist()))
+            userReccDb.set(userid, jsonpickle.dumps(recc_list))
 
         else:
             print ('Not computing new recommendations as user {} active ratings unchanged'.format(userid))

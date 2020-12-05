@@ -10,7 +10,7 @@ import json, jsonpickle
 import requests
 
 #from streamlit.ScriptRunner import StopException, RerunException
-
+st.set_page_config(layout="wide")
 
 ##
 ## Configure test vs. production
@@ -22,11 +22,10 @@ addr = "http://" + restHost
 #redis db connections
 genDb = redis.StrictRedis(host=redisHost, db=0, decode_responses=True)
 loginDb = redis.StrictRedis(host=redisHost, db=1, decode_responses=True)    # userName -> [passwordHash, userId]
-activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><rating>
+activeUserRatingDb = redis.StrictRedis(host=redisHost, db=2, decode_responses=True)    # userId -> userInputrecs dictionary <movieId><[rating,genre]>
 movieDb = redis.StrictRedis(host=redisHost, db=3, decode_responses=True)    # movieId -> [movieName, ImageUrl, genres, year]
-userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [user genre filtered movieIds]
-userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [Recommended movieIds]
-
+userMovieDb = redis.StrictRedis(host=redisHost, db=4, decode_responses=True)    # userId -> [[user genre filtered movieId, genre]]
+userReccDb = redis.StrictRedis(host=redisHost, db=5, decode_responses=True)    # userId -> [[Recommended movieId,genre]]
 
 # Security
 def make_hashes(password):
@@ -47,7 +46,8 @@ def render_movie_list(login_userid, start_index, rec_dict):
 	total_movies = 24
 	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = str(user_movie_list[start_index + ind])
+			movieId = str(user_movie_list[start_index + ind][0])
+			genre = user_movie_list[start_index + ind][1]
 			movieName = movie_dict[movieId][0]
 			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
@@ -55,14 +55,14 @@ def render_movie_list(login_userid, start_index, rec_dict):
 			cols[j].image(movieImg, width=100)
 			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
-				st.write(movieName)
+				st.write("{} ({})".format(movieName,genre))
 				st.write(year)
 			v = 0.0
 			if rec_dict.get(movieId) is not None:
-				v = rec_dict.get(movieId)
+				v = float(rec_dict.get(movieId)[0])
 			val = cols[j].slider(label="Rating", min_value=0.0, max_value=5.0, step=0.5, value=v, format='%.1f', key=start_index + ind)
 			if val > 0.0:
-				rec_dict[movieId] = val
+				rec_dict[movieId] = [str(val),genre]
 			ind += 1
 			if ind == total_movies:
 				return rec_dict
@@ -84,10 +84,11 @@ def display_rated_movies(login_userid, rec_dict):
 			movieImg = movie_dict[movieId][1]
 			year = movie_dict[movieId][3]
 			cols[j].image(movieImg, width=100)
-			rating = rec_dict.get(movieId)
+			rating = float(rec_dict.get(movieId)[0])
+			genre = rec_dict.get(movieId)[1]
 			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
-				st.write(movieName)
+				st.write("{} ({})".format(movieName,genre))
 				st.write(year)
 				st.write("My rating: {}".format(rating))
 			ind += 1
@@ -101,7 +102,8 @@ def display_recommendations(login_userid, start_index, total_movies, recc_list):
 	movie_dict = json.loads(movieDb.get("movie_dict"))
 	for i in range(int(total_movies/6)+1):
 		for j in range(0, 12, 2):
-			movieId = str(recc_list[start_index+ind])
+			movieId = str(recc_list[start_index+ind][0])
+			genre = recc_list[start_index+ind][1]
 			movieName = movie_dict[movieId][0]
 			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
@@ -109,7 +111,7 @@ def display_recommendations(login_userid, start_index, total_movies, recc_list):
 			cols[j].image(movieImg, width=100)
 			expander = cols[j].beta_expander(movieNameShorten, expanded=False)
 			with expander:
-				st.write(movieName)
+				st.write("{} ({})".format(movieName,genre))
 				st.write(year)
 			ind += 1
 			if ind == total_movies:
@@ -120,20 +122,19 @@ def main():
 	"""Movie Recommender App"""
 	global latest_user_id
 
-	st.set_page_config(layout="wide")
-
 	st.title("Movie Recommender System")
 
 	menu = ["Home","Login","SignUp"]
 	choice = st.sidebar.selectbox("Menu",menu)
 
-	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={})
+	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={}, options=[])
 
 	if choice == "Home":
 		st.subheader("Home")
 		session_state.show_movie_count = 0
 		session_state.show_reco_count = 0
 		session_state.rec_dict = {}
+		session_state.options =[]
 		cols = st.beta_columns(12)
 		list = {}
 		ind = 0
@@ -176,6 +177,7 @@ def main():
 						session_state.show_movie_count = 0
 						session_state.show_reco_count = 0
 						session_state.rec_dict = {}
+						session_state.options =[]
 						if st.button("Login Again!"):
 							st.write("true")
 
@@ -217,7 +219,9 @@ def main():
 											else:
 												count = len(recc_list) - session_state.show_reco_count
 												display_recommendations(login_userid, session_state.show_reco_count, count, recc_list)
-											genDb.set(login_userid, 'false')		#flag to set compute new recommendations true or false
+											calls_dict = json.loads(genDb.get(login_userid))
+											calls_dict['recc'] = False
+											genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
 
 									else:
 										st.write(json.loads(response.text)['status'])
@@ -237,16 +241,24 @@ def main():
 							if len(options) >= 5:
 								#REST api call for compute movies to rate -
 								try:
+									if session_state.options != options:
+										calls_dict = json.loads(genDb.get(login_userid))
+										calls_dict['rate'] = True
+										genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
 									headers = {'content-type': 'application/json'}
 									url = addr + '/compute/movies/' + login_userid
 									data = jsonpickle.encode(options)
 									response = requests.post(url, data=data, headers=headers)
+									calls_dict = json.loads(genDb.get(login_userid))
+									calls_dict['rate'] = False
+									genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
+									session_state.options = options
 									if json.loads(response.text)['status'] == 'OK':
 										user_movie_list = json.loads(userMovieDb.get(login_userid))
 										total_movies = len(user_movie_list)
 
 										#check if previous recommendation list exists for current user to update - otherwise create new
-										original_dict = {}		#<movieId> <rating>
+										original_dict = {}		#<movieId> <[rating,genre]>
 										if activeUserRatingDb.get(login_userid):
 											original_dict = json.loads(activeUserRatingDb.get(login_userid))
 											if not session_state.rec_dict:
@@ -272,7 +284,9 @@ def main():
 
 											activeUserRatingDb.set(login_userid, jsonpickle.dumps(original_dict))	#add to db
 											session_state.rec_dict = {}		#clear temp dictionary
-											genDb.set(login_userid, 'true')		#flag to set compute new recommendations true or false
+											calls_dict = json.loads(genDb.get(login_userid))
+											calls_dict['recc'] = True
+											genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
 											st.success("You have successfully submitted your ratings")
 									else:
 										st.write(json.loads(response.text)['status'])
@@ -295,15 +309,18 @@ def main():
 			session_state.show_movie_count = 0
 			session_state.show_reco_count = 0
 			session_state.rec_dict = {}
+			session_state.options =[]
 			st.subheader("Create New Account")
 			new_user = st.text_input("UserName")
 			new_password = st.text_input("Password",type='password')
 			if st.button("Signup"):
 				if(not loginDb.llen(new_user)):
-					loginDb.rpush(new_user, make_hashes(new_password), str(int(latest_user_id)+1))
+					userid = int(latest_user_id)+1
+					loginDb.rpush(new_user, make_hashes(new_password), str(userid))
 					st.success("You have successfully created a valid Account")
 					st.info("Go to Login Menu to login")
-					genDb.set("latest_user_id", int(latest_user_id)+1)
+					genDb.set("latest_user_id", userid)
+					genDb.set(userid, jsonpickle.dumps({}))
 				else:
 					st.warning("User already exists. Please login.")
 
@@ -314,6 +331,7 @@ def main():
 
 if __name__ == '__main__':
 	try:
+		#initialize()
 
 		latest_user_id = genDb.get("latest_user_id")
 		latest_movie_id = genDb.get("latest_movie_id")
