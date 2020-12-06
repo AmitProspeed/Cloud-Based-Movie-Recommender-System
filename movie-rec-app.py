@@ -104,6 +104,7 @@ def display_recommendations(login_userid, start_index, total_movies, recc_list):
 		for j in range(0, 12, 2):
 			movieId = str(recc_list[start_index+ind][0])
 			genre = recc_list[start_index+ind][1]
+			match_percent = recc_list[start_index+ind][2]
 			movieName = movie_dict[movieId][0]
 			movieNameShorten = movieName[:8] + '..' if len(movieName) > 8 else movieName
 			movieImg = movie_dict[movieId][1]
@@ -113,6 +114,7 @@ def display_recommendations(login_userid, start_index, total_movies, recc_list):
 			with expander:
 				st.write("{} ({})".format(movieName,genre))
 				st.write(year)
+				st.write("{}% match".format(match_percent))
 			ind += 1
 			if ind == total_movies:
 				return

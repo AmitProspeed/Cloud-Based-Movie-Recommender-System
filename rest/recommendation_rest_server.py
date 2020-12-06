@@ -231,12 +231,17 @@ def compute_recommendations(userid):
 
             #Store top 20 movie recommendations in the userReccDb
             recc_list = []
+            user_rated_movies = topUsersRating['movieId'].tolist()
             for i in recommendation_df['movieId']:
+                count = user_rated_movies.count(i)
+                match_percent = int((count/50) * 100)   #finding match percent - hitratio@N evaluation - percentage of similar users who has watched the recommended movie - 
                 genres = movie_dict[str(i)][2]
                 genres = genres.split("|")
-                recc_list.append([i,genres[0]])
+                recc_list.append([i,genres[0], match_percent])
             print ("Total number of recommendations for userId {} - {}".format(userid, len(recommendation_df['movieId'])))
-            print (recommendation_df.head(10)['movieId'])
+            recc_list = sorted(recc_list, key=lambda x: x[2], reverse=True)
+            #print (recommendation_df.head(10)['movieId'])
+            print (recc_list[:10])
             userReccDb.set(userid, jsonpickle.dumps(recc_list))
 
         else:
