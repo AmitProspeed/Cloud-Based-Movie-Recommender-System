@@ -2,7 +2,9 @@
 ## You provide this
 ##
 
-FROM ubuntu:latest
+FROM dirkcgrunwald/facerec:latest
+
+EXPOSE 8501
 
 RUN pip install streamlit redis jsonpickle
 
@@ -12,6 +14,16 @@ COPY Movies4U.py /srv
 
 COPY SessionState.py /srv
 
-EXPOSE 5000
+ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
+RUN mkdir -p /root/.streamlit
+RUN bash -c 'echo -e "\
+[general]\n\
+email = \"\"\n\
+" > /root/.streamlit/credentials.toml'
+RUN bash -c 'echo -e "\
+[server]\n\
+enableCORS = false\n\
+" > /root/.streamlit/config.toml'
 
-CMD ["python3", "Movies4U.py"]
+CMD streamlit run Movies4U.py

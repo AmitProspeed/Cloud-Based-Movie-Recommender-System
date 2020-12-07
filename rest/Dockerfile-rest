@@ -2,13 +2,13 @@
 ## You provide this
 ##
 
-FROM ubuntu:latest
+FROM dirkcgrunwald/facerec:latest
 
-RUN pip3 install flask redis jsonpickle
+RUN pip3 install flask redis jsonpickle pandas
 
 WORKDIR /srv
 
-RUN mkdir -p /dataset
+RUN mkdir -p /srv/dataset
 
 COPY dataset/movies.csv /srv/dataset
 

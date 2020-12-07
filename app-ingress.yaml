@@ -15,5 +15,5 @@ spec:
         - path: /*
           backend:
               serviceName: recc-app
-              servicePort: 5000
+              servicePort: 8501
               
