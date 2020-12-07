@@ -1,0 +1,25 @@
+##
+## You provide this
+##
+
+FROM ubuntu:latest
+
+RUN pip3 install flask redis jsonpickle
+
+WORKDIR /srv
+
+RUN mkdir -p /dataset
+
+COPY dataset/movies.csv /srv/dataset
+
+COPY dataset/ratings.csv /srv/dataset
+
+COPY dataset/links_new.csv /srv/dataset
+
+COPY recommendation_rest_server.py /srv
+
+ENV FLASK_APP=recommendation_rest_server.py
+
+EXPOSE 5000
+
+CMD ["python3", "recommendation_rest_server.py"]

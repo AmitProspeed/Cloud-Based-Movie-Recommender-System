@@ -1,0 +1,17 @@
+##
+## You provide this
+##
+
+FROM ubuntu:latest
+
+RUN pip install streamlit redis jsonpickle
+
+WORKDIR /srv
+
+COPY Movies4U.py /srv
+
+COPY SessionState.py /srv
+
+EXPOSE 5000
+
+CMD ["python3", "Movies4U.py"]

@@ -36,9 +36,9 @@ def initialize_application():
             print ("genres list exist in DB0. Loading not required")
         
         #Read movies, ratings and links csv
-        ratings_df = pd.read_csv("../dataset/ml_25m/ratings.csv")
-        movies_df = pd.read_csv("../dataset/ml_25m/movies.csv")
-        links_df = pd.read_csv("../dataset/ml_25m/links_new.csv")
+        ratings_df = pd.read_csv("dataset/ratings.csv")
+        movies_df = pd.read_csv("dataset/movies.csv")
+        links_df = pd.read_csv("dataset/links_new.csv")
         #genDb.set("movies_df", pickle.dumps(movies_df))
         #genDb.set("ratings_df", pickle.dumps(ratings_df))
         #genDb.set("links_df", pickle.dumps(links_df))

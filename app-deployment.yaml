@@ -1,0 +1,32 @@
+##
+## You provide this
+##
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: Recc-app
+spec:
+  selector:
+    matchLabels:
+      app: Recc-app
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: Recc-app
+    spec:
+      containers:
+      - name: Recc-app
+        image: gcr.io/southern-surge-289519/Recc-app:latest
+        env:
+        - name: REDIS_HOST
+          value: 10.3.250.62
+        - name: PYTHONUNBUFFERED
+          value: "0"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 400Mi
+        ports:
+        - containerPort: 5000
+---

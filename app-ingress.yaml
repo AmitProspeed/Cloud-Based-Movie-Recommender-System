@@ -1,0 +1,19 @@
+##
+## You provide this
+##
+
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+    name: Recc-app-ingress
+    annotations:
+        kubernetes.io/ingress.class: "gce"
+spec:
+    rules:
+    - http:
+        paths:
+        - path: /*
+          backend:
+              serviceName: Recc-app
+              servicePort: 5000
+              
