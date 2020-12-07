@@ -233,12 +233,14 @@ def compute_recommendations(userid):
             recc_list = []
             user_rated_movies = topUsersRating['movieId'].tolist()
             for i in recommendation_df['movieId']:
-                count = user_rated_movies.count(i)
-                match_percent = int((count/50) * 100)   #finding match percent - hitratio@N evaluation - percentage of similar users who has watched the recommended movie - 
-                genres = movie_dict[str(i)][2]
-                genres = genres.split("|")
-                recc_list.append([i,genres[0], match_percent])
-            print ("Total number of recommendations for userId {} - {}".format(userid, len(recommendation_df['movieId'])))
+                weighted_rating = recommendation_df.loc[recommendation_df['movieId'] == i, 'weighted average recommendation score'].iloc[0]
+                if (weighted_rating >= 4.0 and weighted_rating <= 5.00):        #only recommend high rated movies from similar users
+                    count = user_rated_movies.count(i)
+                    match_percent = int((count/50) * 100)   #finding match percent - hitratio@N evaluation - percentage of similar users who has watched the recommended movie - 
+                    genres = movie_dict[str(i)][2]
+                    genres = genres.split("|")
+                    recc_list.append([i,genres[0], match_percent, weighted_rating])
+            print ("Total number of recommendations for userId {} - {}".format(userid, len(recc_list)))
             recc_list = sorted(recc_list, key=lambda x: x[2], reverse=True)
             #print (recommendation_df.head(10)['movieId'])
             print (recc_list[:10])
