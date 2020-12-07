@@ -66,18 +66,6 @@ Network URL: http://10.0.0.33:8501
 
 -> Dataset - Download and unzip dataset from https://grouplens.org/datasets/movielens/25m/ in rest/dataset
 
--> docker build -t gcr.io/southern-surge-289519/recc-app -f /home/amro9884/Cloud-Based-Movie-Recommender-System/Dockerfile-app .
-
--> docker push gcr.io/southern-surge-289519/recc-app:latest
-
--> kubectl apply -f app-deployment.yaml
-
--> kubectl apply -f app-service.yaml
-
-Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalancing=ENABLED
-
--> kubectl apply -f app-ingress.yaml
-
 -> docker build -t gcr.io/southern-surge-289519/recc-rest -f /home/amro9884/Cloud-Based-Movie-Recommender-System/rest/Dockerfile-rest .
 
 -> docker push gcr.io/southern-surge-289519/recc-rest:latest
@@ -86,5 +74,19 @@ Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalanc
 
 -> kubectl apply -f rest-service.yaml
 
+-> docker build -t gcr.io/southern-surge-289519/recc-app -f /home/amro9884/Cloud-Based-Movie-Recommender-System/Dockerfile-app .
 
-### [Collaborative filtering algorithm -](https://github.com/TheClub4/collaborative_filtering/blob/master/collaborative_filtering.ipynb)
+-> docker push gcr.io/southern-surge-289519/recc-app:latest
+
+-> kubectl apply -f app-deployment.yaml
+
+-> kubectl apply -f app-ingress-backendconfig.yaml
+
+-> kubectl apply -f app-service.yaml
+
+Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalancing=ENABLED
+
+-> kubectl apply -f app-ingress.yaml
+
+
+### Collaborative filtering algorithm - https://github.com/TheClub4/collaborative_filtering/blob/master/collaborative_filtering.ipynb
