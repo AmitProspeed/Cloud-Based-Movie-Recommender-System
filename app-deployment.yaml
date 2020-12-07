@@ -4,20 +4,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: Recc-app
+  name: recc-app
 spec:
   selector:
     matchLabels:
-      app: Recc-app
+      app: recc-app
   replicas: 1
   template:
     metadata:
       labels:
-        app: Recc-app
+        app: recc-app
     spec:
       containers:
-      - name: Recc-app
-        image: gcr.io/southern-surge-289519/Recc-app:latest
+      - name: recc-app
+        image: gcr.io/southern-surge-289519/recc-app:latest
         env:
         - name: REDIS_HOST
           value: 10.3.250.62

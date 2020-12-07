@@ -5,7 +5,7 @@
 apiVersion: networking.k8s.io/v1beta1
 kind: Ingress
 metadata:
-    name: Recc-app-ingress
+    name: recc-app-ingress
     annotations:
         kubernetes.io/ingress.class: "gce"
 spec:
@@ -14,6 +14,6 @@ spec:
         paths:
         - path: /*
           backend:
-              serviceName: Recc-app
+              serviceName: recc-app
               servicePort: 5000
               

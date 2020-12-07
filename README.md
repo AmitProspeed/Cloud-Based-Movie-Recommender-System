@@ -66,9 +66,9 @@ Network URL: http://10.0.0.33:8501
 
 -> Dataset - Download and unzip dataset from https://grouplens.org/datasets/movielens/25m/ in rest/dataset
 
--> docker build -t gcr.io/southern-surge-289519/Recc-app -f /home/amro9884/Cloud-Based-Movie-Recommender-System/Dockerfile-app .
+-> docker build -t gcr.io/southern-surge-289519/recc-app -f /home/amro9884/Cloud-Based-Movie-Recommender-System/Dockerfile-app .
 
--> docker push gcr.io/southern-surge-289519/Recc-app:latest
+-> docker push gcr.io/southern-surge-289519/recc-app:latest
 
 -> kubectl apply -f app-deployment.yaml
 
@@ -78,9 +78,9 @@ Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalanc
 
 -> kubectl apply -f app-ingress.yaml
 
--> docker build -t gcr.io/southern-surge-289519/Recc-rest -f /home/amro9884/Cloud-Based-Movie-Recommender-System/rest/Dockerfile-rest .
+-> docker build -t gcr.io/southern-surge-289519/recc-rest -f /home/amro9884/Cloud-Based-Movie-Recommender-System/rest/Dockerfile-rest .
 
--> docker push gcr.io/southern-surge-289519/Recc-rest:latest
+-> docker push gcr.io/southern-surge-289519/recc-rest:latest
 
 -> kubectl apply -f rest-deployment.yaml
 
