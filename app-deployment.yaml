@@ -31,4 +31,8 @@ spec:
             memory: 400Mi
         ports:
         - containerPort: 8501
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8501
 ---

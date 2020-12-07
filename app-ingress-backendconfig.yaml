@@ -4,5 +4,4 @@ metadata:
   name: app-ingress-backendconfig
 spec:
   healthCheck:
-    checkIntervalSec: 60
-    timeoutSec: 60
+    requestPath: /healthz
