@@ -7,7 +7,7 @@ kind: Service
 metadata:
     name: recc-app
     annotations:
-        cloud.google.com/backend-config: '{"ports": {"8501":"app-ingress-backendconfig"}}'
+        cloud.google.com/backend-config: '{"default": "app-ingress-backendconfig"}'
     labels:
         app: recc-app
 spec:
