@@ -20,7 +20,7 @@ spec:
         image: gcr.io/southern-surge-289519/recc-rest:latest
         env:
         - name: REDIS_HOST
-          value: 10.3.250.206
+          value: 10.3.245.93
         - name: PYTHONUNBUFFERED
           value: "0"
         resources:

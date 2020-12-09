@@ -189,7 +189,7 @@ def main():
 						st.success("Logged In as {}".format(username))
 						login_userid = loginDb.lindex(username, 1)
 
-						task = st.selectbox("Task",["Movies watched","Movie Recommendations","Rate Movies"])
+						task = st.selectbox("Task",["Rated Movies","Movie Recommendations","Rate Movies"])
 						userInput = activeUserRatingDb.get(login_userid)
 
 						if task == "Rated Movies":
@@ -207,9 +207,11 @@ def main():
 								try:
 									with st.spinner("Computing your personalized recommendations. Please Wait.."):
 										if not session_state.api_call:
+											#This boolean handles Kubernetes health check to prevent multiple compute recc calls
+											session_state.api_call = True
+											print ("called, api call {}",format(session_state.api_call))
 											headers = {'content-type': 'application/json'}
 											url = addr + '/compute/recommendations/' + login_userid
-											session_state.api_call = True			#This boolean handles Kubernetes health check to prevent multiple compute recc calls
 											response = requests.post(url, headers=headers)
 										calls_dict = json.loads(genDb.get(login_userid))
 										if (response and json.loads(response.text)['status'] == 'OK') or (calls_dict['recc'] == False):
@@ -238,7 +240,7 @@ def main():
 											st.warning("Still computing....Please wait.")
 											st.button('Force Retry', key=1)
 								except Exception as e:
-									st.error('Error Occurred - {}', str(e))
+									st.error('Error Occurred - {}'.format(str(e)))
 									print (traceback.print_exc())
 									st.button('Try Again', key=1)
 
@@ -305,7 +307,7 @@ def main():
 										st.button('Retry', key=2)
 								
 								except Exception as e:
-									st.error('Error Occurred - {}', str(e))
+									st.error('Error Occurred - {}'.format(str(e)))
 									print (traceback.print_exc())
 									st.button('Try Again', key=2)
 						
@@ -338,7 +340,7 @@ def main():
 					st.warning("User already exists. Please login.")
 
 		except Exception as e:
-			st.error("Error signing up - {}", str(e))
+			st.error("Error signing up - {}".format(str(e)))
 			print (traceback.print_exc())
 
 
@@ -353,6 +355,6 @@ if __name__ == '__main__':
 	
 	except Exception as e:
 		#restart required
-		st.error("Exception occurred, need server restart - {}", str(e))
+		st.error("Exception occurred - need server restart - {}".format(str(e)))
 		print("Exception occurred, need restart...\nDetail:\n%s" % e)
 		print (traceback.print_exc())
