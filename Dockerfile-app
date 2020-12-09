@@ -23,6 +23,7 @@ email = \"\"\n\
 " > /root/.streamlit/credentials.toml'
 RUN bash -c 'echo -e "\
 [server]\n\
+enableXsrfProtection = false\n\
 enableCORS = false\n\
 " > /root/.streamlit/config.toml'
 

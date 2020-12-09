@@ -131,6 +131,11 @@ def display_recommendations(login_userid, start_index, total_movies, recc_list):
 			if ind == total_movies:
 				return
 
+@st.cache(suppress_st_warning=True, allow_output_mutation=True)
+def getSessionState():
+	print ("Creating new session")
+	return SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={}, options=[], api_call=False)
+
 
 def main():
 	"""Movie Recommender App"""
@@ -141,7 +146,7 @@ def main():
 	menu = ["Home","Login","SignUp"]
 	choice = st.sidebar.selectbox("Menu",menu)
 
-	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={}, options=[], api_call=False)
+	session_state = getSessionState()
 
 	if choice == "Home":
 		st.subheader("Home")
@@ -206,10 +211,10 @@ def main():
 								#REST api call for compute recommendations -
 								try:
 									with st.spinner("Computing your personalized recommendations. Please Wait.."):
+										response = {}
 										if not session_state.api_call:
 											#This boolean handles Kubernetes health check to prevent multiple compute recc calls
 											session_state.api_call = True
-											print ("called, api call {}",format(session_state.api_call))
 											headers = {'content-type': 'application/json'}
 											url = addr + '/compute/recommendations/' + login_userid
 											response = requests.post(url, headers=headers)
@@ -315,6 +320,11 @@ def main():
 					st.warning("Incorrect Username/Password")
 
 			else:
+				session_state.show_movie_count = 0
+				session_state.show_reco_count = 0
+				session_state.rec_dict = {}
+				session_state.options =[]
+				session_state.api_call = False
 				session_state.logout = False
 
 
