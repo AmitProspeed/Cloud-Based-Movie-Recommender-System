@@ -141,7 +141,7 @@ def main():
 	menu = ["Home","Login","SignUp"]
 	choice = st.sidebar.selectbox("Menu",menu)
 
-	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={}, options=[])
+	session_state = SessionState.get(logout=False, show_movie_count=0, show_reco_count=0, rec_dict={}, options=[], api_call=False)
 
 	if choice == "Home":
 		st.subheader("Home")
@@ -149,6 +149,7 @@ def main():
 		session_state.show_reco_count = 0
 		session_state.rec_dict = {}
 		session_state.options =[]
+		session_state.api_call = False
 		st.image("https://i.pinimg.com/originals/af/21/0f/af210fbb1e24644723dbe71312595034.jpg", use_column_width=True)
 
 	elif choice == "Login":
@@ -179,6 +180,7 @@ def main():
 						session_state.show_reco_count = 0
 						session_state.rec_dict = {}
 						session_state.options =[]
+						session_state.api_call = False
 						if st.button("Login Again!"):
 							st.write("true")
 
@@ -203,32 +205,40 @@ def main():
 							if activeUserRatingDb.get(login_userid):
 								#REST api call for compute recommendations -
 								try:
-									headers = {'content-type': 'application/json'}
-									url = addr + '/compute/recommendations/' + login_userid
 									with st.spinner("Computing your personalized recommendations. Please Wait.."):
-										response = requests.post(url, headers=headers)
-									if json.loads(response.text)['status'] == 'OK':
-										if st.button("Show More", key=1):
-											session_state.show_reco_count += 24
-										if st.button("Back", key=1):
-											session_state.show_reco_count = max(0, session_state.show_reco_count-24)
-										with st.spinner("Listing data. Please Wait.."):
-											st.write("Showing top {} recommendations".format(str(session_state.show_reco_count) + "-" + str(session_state.show_reco_count+24)))
-											recc_list = json.loads(userReccDb.get(login_userid))
-											if session_state.show_reco_count < (len(recc_list)-24):
-												display_recommendations(login_userid, session_state.show_reco_count, 24, recc_list)
-											else:
-												count = len(recc_list) - session_state.show_reco_count
-												display_recommendations(login_userid, session_state.show_reco_count, count, recc_list)
-											calls_dict = json.loads(genDb.get(login_userid))
-											calls_dict['recc'] = False
-											genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
+										if not session_state.api_call:
+											headers = {'content-type': 'application/json'}
+											url = addr + '/compute/recommendations/' + login_userid
+											session_state.api_call = True			#This boolean handles Kubernetes health check to prevent multiple compute recc calls
+											response = requests.post(url, headers=headers)
+										calls_dict = json.loads(genDb.get(login_userid))
+										if (response and json.loads(response.text)['status'] == 'OK') or (calls_dict['recc'] == False):
+											session_state.api_call = False
+											if st.button("Show More", key=1):
+												session_state.show_reco_count += 24
+											if st.button("Back", key=1):
+												session_state.show_reco_count = max(0, session_state.show_reco_count-24)
+											with st.spinner("Listing data. Please Wait.."):
+												st.write("Showing top {} recommendations".format(str(session_state.show_reco_count) + "-" + str(session_state.show_reco_count+24)))
+												recc_list = json.loads(userReccDb.get(login_userid))
+												if recc_list:
+													if session_state.show_reco_count < (len(recc_list)-24):
+														display_recommendations(login_userid, session_state.show_reco_count, 24, recc_list)
+													else:
+														count = len(recc_list) - session_state.show_reco_count
+														display_recommendations(login_userid, session_state.show_reco_count, count, recc_list)
+													#calls_dict = json.loads(genDb.get(login_userid))
+													#calls_dict['recc'] = False
+													#genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
+												else:
+													st.write("Not enough movies rated. Please rate few more.")
+													raise Exception("Not enough ratings. Need atleast 5")
 
-									else:
-										st.write(json.loads(response.text)['status'])
-										st.button('Retry', key=1)
+										else:
+											st.warning("Still computing....Please wait.")
+											st.button('Force Retry', key=1)
 								except Exception as e:
-									st.error('Error Occurred')
+									st.error('Error Occurred - {}', str(e))
 									print (traceback.print_exc())
 									st.button('Try Again', key=1)
 
@@ -272,7 +282,7 @@ def main():
 											if st.button("Back", key=2):
 												session_state.show_movie_count = max(0, session_state.show_movie_count-24)
 											with st.spinner("Fetching data. Please Wait.."):
-												st.write("Showing {} movies to rate".format(str(session_state.show_movie_count) + "-" + str(session_state.show_movie_count+24)))
+												st.write("Showing {} movies to rate (Please rate atleast 5)".format(str(session_state.show_movie_count) + "-" + str(session_state.show_movie_count+24)))
 												if session_state.show_movie_count < (total_movies-24):
 													session_state.rec_dict = render_movie_list(login_userid, session_state.show_movie_count, session_state.rec_dict)
 
@@ -287,6 +297,7 @@ def main():
 											session_state.rec_dict = {}		#clear temp dictionary
 											calls_dict = json.loads(genDb.get(login_userid))
 											calls_dict['recc'] = True
+											session_state.api_call = False
 											genDb.set(login_userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
 											st.success("You have successfully submitted your ratings")
 									else:
@@ -294,7 +305,7 @@ def main():
 										st.button('Retry', key=2)
 								
 								except Exception as e:
-									st.error('Error Occurred')
+									st.error('Error Occurred - {}', str(e))
 									print (traceback.print_exc())
 									st.button('Try Again', key=2)
 						
@@ -311,6 +322,7 @@ def main():
 			session_state.show_reco_count = 0
 			session_state.rec_dict = {}
 			session_state.options =[]
+			session_state.api_call = False
 			st.subheader("Create New Account")
 			new_user = st.text_input("UserName")
 			new_password = st.text_input("Password",type='password')
@@ -326,7 +338,7 @@ def main():
 					st.warning("User already exists. Please login.")
 
 		except Exception as e:
-			st.error("Error signing up")
+			st.error("Error signing up - {}", str(e))
 			print (traceback.print_exc())
 
 
@@ -341,5 +353,6 @@ if __name__ == '__main__':
 	
 	except Exception as e:
 		#restart required
+		st.error("Exception occurred, need server restart - {}", str(e))
 		print("Exception occurred, need restart...\nDetail:\n%s" % e)
 		print (traceback.print_exc())

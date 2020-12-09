@@ -245,6 +245,9 @@ def compute_recommendations(userid):
             #print (recommendation_df.head(10)['movieId'])
             print (recc_list[:10])
             userReccDb.set(userid, jsonpickle.dumps(recc_list))
+            calls_dict = json.loads(genDb.get(userid))
+            calls_dict['recc'] = False
+            genDb.set(userid, jsonpickle.dumps(calls_dict))		#<userid><'recc':true/fasle, 'rate':true/false>
 
         else:
             print ('Not computing new recommendations as user {} active ratings unchanged'.format(userid))
