@@ -192,7 +192,7 @@ def main():
 						task = st.selectbox("Task",["Movies watched","Movie Recommendations","Rate Movies"])
 						userInput = activeUserRatingDb.get(login_userid)
 
-						if task == "Movies watched":
+						if task == "Rated Movies":
 							if activeUserRatingDb.get(login_userid):
 								with st.spinner("Fetching data. Please Wait.."):
 									rec_dict = json.loads(activeUserRatingDb.get(login_userid))
