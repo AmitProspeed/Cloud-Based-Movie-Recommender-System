@@ -93,6 +93,7 @@ Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalanc
 
 ### Collaborative filtering algorithm : https://github.com/TheClub4/collaborative_filtering/blob/master/collaborative_filtering.ipynb
 
+### Working System Video : https://www.youtube.com/watch?v=cyC2jlzdmn4
 
 ### Screenshots
 
