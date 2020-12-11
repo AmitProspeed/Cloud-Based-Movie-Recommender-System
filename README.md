@@ -1,7 +1,7 @@
 # Cloud-Based-Movie-Recommender-System
 A recommender system is used to recommend items to a user based on the judgement whether they would prefer the item or not. This is done by predicting the future preferences of the user on the basis of past preferences and the preferences of similar users. The goal of this project is to create such a recommender system for movies using collaborative filtering approach. For an interactive experience for online users, we are created a data application using open source frameworks - Streamlit. The application is hosted as a Docker container on GCP and deployed on Kubernetes cluster using GKE. A load balancer service (deployed as Ingress service on GKE) distributes server workloads across multiple computing resources so the app can handle multiple call requests without timing out. In addition, GKE provides a stable IP address that external users can use to access the app. When the cluster receives a request, the load balancer routes it to one of the Pods in the Service, which then returns an instance of the Streamlit app. Our primary goal is to implement the recommender system for movies. Our stretch goal is to extend this system to work with other datasets such as music, ecommerce, etc. Moreover, in addition to the offline recommendation algorithm, we are working towards integrating an online recommender algorithm as well.
 
-## (1) Architecture
+## Architecture
 ![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/Architecture.png)
 
 ## Interaction of Different Software and Hardware Components:
@@ -82,6 +82,8 @@ Network URL: http://10.0.0.33:8501
 
 -> kubectl apply -f app-ingress-backendconfig.yaml
 
+-> (to delete backend config) - kubectl delete backendconfig app-ingress-backendconfig
+
 -> kubectl apply -f app-service.yaml
 
 Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalancing=ENABLED
@@ -89,4 +91,17 @@ Ingress - gcloud container clusters update mykube --update-addons=HttpLoadBalanc
 -> kubectl apply -f app-ingress.yaml
 
 
-### Collaborative filtering algorithm - https://github.com/TheClub4/collaborative_filtering/blob/master/collaborative_filtering.ipynb
+### Collaborative filtering algorithm : https://github.com/TheClub4/collaborative_filtering/blob/master/collaborative_filtering.ipynb
+
+
+### Screenshots
+
+![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/screen1.png)
+
+![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/screen2.png)
+
+![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/screen3.png)
+
+![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/screen4.png)
+
+![Arch_Image](https://github.com/AmitProspeed/Cloud-Based-Movie-Recommender-System/blob/main/images/screen5.png)
